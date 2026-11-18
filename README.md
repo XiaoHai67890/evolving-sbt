@@ -2,11 +2,11 @@
 
 An experimental reference implementation of a proposed interface for a non-transferable credential whose independently governed namespaces can evolve through evidence-authorized state transitions.
 
-**Status: pre-ERC research implementation. No ERC number has been assigned.** The candidate interface and this implementation may change in response to review.
+This repository accompanies the [ERC-8498 proposal](https://github.com/ethereum/ERCs/pull/2171). The v0.2 reference profile adds public revocation and admission alongside the proposed core interface.
 
-[Ethereum Magicians discussion](https://ethereum-magicians.org/t/pre-erc-discussion-evolving-sbt-with-namespaced-state-transitions/30361) · [Implementation specification](docs/specification.md) · [Design discussion](docs/discussion.md) · [Roadmap](docs/roadmap.md) · [Security and trust assumptions](SECURITY.md)
+[Ethereum Magicians discussion](https://ethereum-magicians.org/t/erc-8498-namespaced-state-transitions-for-sbts/30361) · [Implementation specification](docs/specification.md) · [Design discussion](docs/discussion.md) · [Roadmap](docs/roadmap.md) · [Security and trust assumptions](SECURITY.md)
 
-中文概览：本项目实现一个不可转移的 SBT，并让不同命名空间依据各自的权限和证据规则持续更新。第一版验证认可方的真实签名、状态前驱、经历追加、纠错和去重；数据公开，尚未实现 ZK 隐私证明、跨链历史验证或一次性权益核销。
+v0.1 用签名验证经历的追加和纠错。v0.2 让机构逐条撤回认可，活动方用同一份历史重算资格，并在入场时核销一次权益。公开演示覆盖 A、B 两项贡献、容量耗尽后的撤销，以及两个入口共用同一本核销账。[中文方案与复现步骤](docs/v0.2-revocation-and-admission.zh-CN.md)
 
 ## What this repository tests
 
@@ -27,7 +27,7 @@ A namespace is a semantic and authorization boundary. Two namespaces in the same
 
 The first profile uses real signed authorizations and a bounded, transparent record history. It checks the actual proposed transition; it does not accept an arbitrary administrator-supplied root or use a verifier that always returns `true`. The lifetime limit is 32 accepted records per credential and namespace, including corrections, so correction capacity must be planned.
 
-| Implemented in the first reference profile | Deferred |
+| Implemented in the first reference profile | Deferred at the v0.1 milestone |
 |---|---|
 | ERC-721 credential with permanent ERC-5192 locking | One-person-one-credential or proof of humanity |
 | Independent namespace state and policy discovery | Universal action taxonomy or reputation formula |
@@ -53,17 +53,29 @@ cd evolving-sbt
 forge build
 forge test
 forge script script/Demo.s.sol:Demo
+forge script script/DemoV02.s.sol:DemoV02
 ```
 
-The demo runs in local simulation by default; no RPC endpoint or funded account is required. It registers contribution and education namespaces, mints a credential, initializes both namespaces, appends and corrects an experience, and demonstrates duplicate rejection and preserved history. The tests use generated test keys and exercise accepted updates as well as rejected transitions, including independent reproductions of the commitment and typed-signature encodings.
+Both demos use local simulation and generated test keys. The first registers contribution and education namespaces, initializes a credential, and demonstrates signed growth and correction. The v0.2 demo fills all 32 history slots, pauses updates, revokes B, and asserts the outcome at two activities and two entrances.
 
-If you cloned without submodules:
+For a checkout created without submodules, run `git submodule update --init --recursive`. The repository pins Solidity 0.8.30, the Cancun EVM target, OpenZeppelin Contracts 5.7.0, and forge-std 1.17.0. See [foundry.toml](foundry.toml) for the compiler and test configuration.
 
-```sh
-git submodule update --init --recursive
-```
+## v0.2 public contribution admission
 
-The repository pins dependencies through Git submodule commits. The implementation is built with Solidity 0.8.30, the Cancun EVM target, OpenZeppelin Contracts 5.7.0, and forge-std 1.17.0. See `foundry.toml` for the compiler and test configuration.
+The issuer activates a [revocation registry](src/ContributionRevocationRegistry.sol) tied to an existing SBT deployment, namespace and policy. It can appoint or remove a delegate for individual claim versions. Only the issuer can permanently withdraw a whole experience. Both actions preserve the original records and consume no SBT history slots. At full capacity a new corrected record still requires a fresh slot.
+
+The organizer selects a trusted registry, event, benefit, threshold and session signer when deploying the [admission contract](src/ContributionAdmission.sol). All entrances for that benefit use the same deployment. Two calls cover the holder journey.
+
+| Call | Observable result |
+|---|---|
+| `eligible(tokenId, indices)` | Reads current namespace usability, holder, policy, record versions, expiry and both revocation levels. Every selected experience must be distinct and valid. The result is a preview at the state queried. |
+| `redeem(tokenId, indices, session, gateSignature)` | The holder submits a signed entrance session. The contract rechecks qualification and atomically consumes the nonce and that account's entitlement. A failed transaction consumes neither. |
+
+`consumed(holder)` answers whether the account already used the event benefit. A holder can remain qualified after admission. Entrances match the finalized `Admitted` event to their pending session before opening. The [terminal receipt checker](script/check-admission.py) reads a trusted RPC endpoint. Run `python3 script/check-admission.py --help` for its inputs. Terminals must persist the handling of their own sessions to open only once for a confirmed receipt.
+
+This profile reveals the account and submitted record indices. Private presentations are a v0.3 milestone. On new deployments the gate checks the selected records in one call. A registry with no withdrawals for the token can confirm that fact in one read. Older deployments remain usable through their original record and revocation queries.
+
+To measure whole-transaction gas, run `forge build` followed by `python3 script/admission-gas.py`. The benchmark starts a local Anvil node and measures admission with and without a prior withdrawal. See the [Chinese design and cost comparison](docs/v0.2-revocation-and-admission.zh-CN.md#本地复现与实测).
 
 ## Read the implementation
 
@@ -74,7 +86,7 @@ The repository pins dependencies through Git submodule commits. The implementati
 - [`docs/specification.md`](docs/specification.md): concrete v0.1 encoding, authorization, lifecycle, and state-transition rules.
 - [`docs/discussion.md`](docs/discussion.md): the broader proposal, including future privacy and application profiles.
 
-The discussion describes a larger system than v0.1 implements. The implementation specification and executable tests define this repository's current behavior.
+The [v0.1 specification](docs/specification.md), [v0.2 design](docs/v0.2-revocation-and-admission.zh-CN.md) and executable tests document the current reference profiles.
 
 ## Relationship to existing standards
 
@@ -84,6 +96,6 @@ The implementation uses [ERC-721](https://eips.ethereum.org/EIPS/eip-721) with [
 
 ## Contributing
 
-Review the [implementation specification](docs/specification.md), reproduce the demo, and bring concrete interoperability or security findings to GitHub issues or the [Magicians thread](https://ethereum-magicians.org/t/pre-erc-discussion-evolving-sbt-with-namespaced-state-transitions/30361). Include the expected behavior, observed behavior, and a minimal test where possible. Changes to the candidate ABI should explain the effect on independent consumers and distinguish core requirements from profile-specific behavior.
+Review the [implementation specification](docs/specification.md), reproduce the demo, and bring concrete interoperability or security findings to GitHub issues or the [Magicians thread](https://ethereum-magicians.org/t/erc-8498-namespaced-state-transitions-for-sbts/30361). Include the expected behavior, observed behavior, and a minimal test where possible. Changes to the candidate ABI should explain the effect on independent consumers and distinguish core requirements from profile-specific behavior.
 
 This code has not received an independent security audit. Read [SECURITY.md](SECURITY.md) before adapting it for a deployment with real credentials or entitlements.

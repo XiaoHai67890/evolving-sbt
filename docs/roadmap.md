@@ -12,11 +12,11 @@ The implementation is transparent. All submitted data and state are observable. 
 
 ## v0.2 — Current qualification and application consumption
 
-Add an independently operated issuer revocation registry and a small public-data qualification example. Revocation must affect qualification even when the holder does not update the SBT. A cached level or score must expose enough dependencies for current validation.
+The signed growth profile now has an [issuer-operated registry](../src/ContributionRevocationRegistry.sol) and a [public qualification and redemption contract](../src/ContributionAdmission.sol). The registry supports claim-only delegates and issuer-only withdrawal of an entire experience. An activity reads the registry at redemption even if the holder has never updated the SBT after withdrawal.
 
-Add application-side one-time entitlement consumption with an explicitly scoped identifier and atomic validation plus consumption. Updating the SBT or regenerating a presentation must not create another copy of the same entitlement. Recovery must preserve the identity used for consumption.
+All entrances for the same benefit share one deployment. The holder's account and event benefit identify the entitlement throughout SBT updates, credential replacement and regenerated sessions. Account migration requires a separate recovery design.
 
-Acceptance examples include two qualifying contributions, an externally revoked claim, an expired namespace, and a second attempt to consume the same admission right. Balance requirements need authenticated checkpoint semantics and must not be represented as permanent historical attributes.
+The [A/B walkthrough](../script/DemoV02.s.sol) demonstrates external withdrawal after capacity exhaustion, a rejected stale preview and one admission across two entrances. The [acceptance tests](../test/ContributionAdmission.t.sol) also cover expiry, disabled use and replay. The [profile design](v0.2-revocation-and-admission.zh-CN.md) records the measured qualification and redemption costs.
 
 ## v0.3 — Private presentations
 
@@ -34,6 +34,6 @@ Acceptance requires positive and negative proof tests plus measured proving and 
 - Scalable accumulators and authenticated record-status structures replacing the 32-record public-history bound, with continuity proofs for accepted records and accounting.
 - Recovery through stable smart-account control, including invalidation of pending authorizations.
 - Additional independent implementations and shared test vectors.
-- A formal ERC submission once the interoperability boundary has been reviewed and its encodings and failure semantics are stable.
+- Incorporate interoperability feedback and independent implementation results into the [ERC-8498 draft](https://github.com/ethereum/ERCs/pull/2171).
 
 Each addition should preserve the distinction between core interoperability, a particular verification profile, and an application's eligibility policy.

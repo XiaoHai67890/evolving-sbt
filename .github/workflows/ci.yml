@@ -28,3 +28,7 @@ jobs:
         run: forge test -vvv
       - name: Run the local example
         run: forge script script/Demo.s.sol:Demo
+      - name: Run the contribution admission example
+        run: forge script script/DemoV02.s.sol:DemoV02
+      - name: Test finalized admission receipt checks
+        run: python3 -B -m unittest discover -s test -p 'test_check_admission.py'

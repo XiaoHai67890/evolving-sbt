@@ -16,13 +16,19 @@ This repository is an experimental reference implementation. It has not received
 
 **Privacy.** Storage, calldata, signatures, state commitments, and events are public. Hashing a record does not hide low-entropy contents or prevent linkage. Do not submit personal data or secrets to this reference deployment. There is no ZK circuit, private presentation, or anonymity set in v0.1.
 
-**Current validity.** Namespace lifecycle controls are implemented separately from the planned independent per-claim revocation registry. Applications cannot treat v0.1 as a complete external-claim revocation system. Expiration is evaluated against time; the passage of time does not execute a transaction or advance a revision.
+**Current validity.** The v0.2 admission contract consults both the namespace lifecycle and its external revocation registry at use time. An issuer can withdraw a record even if the SBT head stays fixed or updates are paused. Expiration takes effect with the block timestamp. A cached result can become stale between preview and redemption.
 
 Historical admission permits expired records and an expired namespace that still has `Active` status may accept growth. `recordAt` reports whether a claim is nonsuperseded, not whether it is presently valid. `isUsable` checks namespace usability, not an application's complete qualification predicate. A consumer must perform the additional record and application checks.
 
 **Availability and scale.** The concrete profile keeps a bounded public history. Its capacity and cost are implementation limits, not an unbounded growth guarantee. The future private profile needs an independent material-delivery and witness-availability design.
 
 The 32-record limit includes corrections. Exhausting it prevents further append and correction operations. Suspension, namespace revocation, and other lifecycle operations remain available; deployments needing future correction must preserve capacity. There is no pruning or policy migration escape hatch in v0.1.
+
+**Trust in the registry.** The organizer pins the chain, ledger, SBT, namespace, policy and issuer-activated registry for the event. An issuer can activate more than one registry. Switching registries or deploying separate admission ledgers for two entrances can split revocation or consumption history. A claim delegate can irrevocably withdraw an accepted version until removed. Removing the delegate affects future calls. Only the issuer can withdraw an entire experience.
+
+**Admission and the physical entrance.** Every entrance for one event benefit shares a single ledger. The signer issues unique nonces with short deadlines. The holder submits the session using the same account that owns the credential. A confirmed redemption remains spent after a new session or a replacement credential. This binds one benefit to one account. Terminals trust their RPC endpoint, match the canonical finalized event to their own outstanding session and durably close it before triggering admission. A read-only receipt lookup can return the same success on multiple queries.
+
+**Public disclosure.** In v0.2 observers can link the holder, record indices, entrance and admission transaction. Privacy-preserving proofs and witness delivery are outside this profile.
 
 ## Properties to preserve
 
@@ -33,7 +39,7 @@ The 32-record limit includes corrections. Exhausting it prevents further append 
 - Failed transitions leave no partial state or accounting changes.
 - Revisions, epochs, and credential identities cannot reset and reactivate earlier authorizations.
 - The concrete profile must validate the state it commits; an authorized arbitrary-root setter is not an equivalent implementation.
-- Future application consumption must bind a stable entitlement identity and validate and consume atomically.
+- Redemption rechecks eligibility and consumes a stable account entitlement and a session nonce in the same transaction.
 
 ## Reporting
 

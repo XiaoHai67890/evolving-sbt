@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @notice Candidate interface from the published pre-ERC discussion; not an assigned ERC.
+/// @notice Proposed core interface for ERC-8498, Namespaced State Transitions for SBTs.
 interface IEvolvingSBT {
     enum NamespaceStatus {
         Uninitialized,

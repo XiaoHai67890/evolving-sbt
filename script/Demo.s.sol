@@ -21,7 +21,7 @@ contract Demo is Script {
     uint256 internal tokenId;
     address internal holder;
 
-    function run() external returns (EvolvingSBT deployed) {
+    function run() external virtual returns (EvolvingSBT deployed) {
         holder = vm.addr(HOLDER_KEY);
         address admin = vm.addr(ADMIN_KEY);
         sbt = new EvolvingSBT(admin);

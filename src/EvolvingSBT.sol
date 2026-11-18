@@ -63,10 +63,21 @@ contract EvolvingSBT is ERC721, Ownable, EIP712, ReentrancyGuard, IEvolvingSBT, 
         PolicyStatus live;
     }
 
+    // Every accepted record has the immutable token holder as its subject.
+    struct StoredRecord {
+        bytes32 claimId;
+        bytes32 experienceId;
+        bytes32 contentHash;
+        uint64 validUntil;
+        bytes32 replaces;
+    }
+
     struct Growth {
-        Record[] records;
+        StoredRecord[] records;
         mapping(bytes32 => uint256) claimIndexPlusOne;
-        mapping(bytes32 => bool) superseded;
+        // One bit per historical index. The two masks share one storage slot.
+        uint32 superseded;
+        uint32 expiring;
         mapping(bytes32 => bool) credited;
         bytes32 recordsRoot;
         bytes32 creditedActionsRoot;
@@ -139,7 +150,7 @@ contract EvolvingSBT is ERC721, Ownable, EIP712, ReentrancyGuard, IEvolvingSBT, 
 
     function supportsInterface(bytes4 interfaceId) public view override returns (bool) {
         return interfaceId == type(IEvolvingSBT).interfaceId || interfaceId == type(IERC5192).interfaceId
-            || super.supportsInterface(interfaceId);
+            || interfaceId == this.admissionRecords.selector || super.supportsInterface(interfaceId);
     }
 
     function _update(address to, uint256 tokenId, address auth) internal override returns (address) {
@@ -345,11 +356,62 @@ contract EvolvingSBT is ERC721, Ownable, EIP712, ReentrancyGuard, IEvolvingSBT, 
         view
         returns (Record memory record, bool active)
     {
-        _requireOwned(tokenId);
+        address holder = _requireOwned(tokenId);
         _policy(namespace);
         Growth storage g = _growth[tokenId][namespace];
-        record = g.records[index];
-        return (record, !g.superseded[record.claimId]);
+        StoredRecord storage stored = g.records[index];
+        record = Record({
+            claimId: stored.claimId,
+            experienceId: stored.experienceId,
+            subject: holder,
+            contentHash: stored.contentHash,
+            validUntil: stored.validUntil,
+            replaces: stored.replaces
+        });
+        return (record, (g.superseded & _recordBit(index)) == 0);
+    }
+
+    /// @notice Read the current holder and [claimId, experienceId] pairs for a public admission check.
+    /// @dev Checks the signed-growth profile only. Consumers must still check external revocations.
+    ///      At most one version of any experience is current, so distinct current indices are distinct experiences.
+    ///      A zero holder means the entire selection is invalid. Callers may supply indices in any order.
+    ///      With includeIds=false the same checks return an empty array, saving identifier reads.
+    function admissionRecords(
+        uint256 tokenId,
+        bytes32 namespace,
+        bytes32 expectedPolicy,
+        uint256[] calldata indices,
+        bool includeIds
+    ) external view returns (address holder, bytes32[2][] memory ids) {
+        holder = _ownerOf(tokenId);
+        StateHead storage head = _heads[tokenId][namespace];
+        if (
+            holder == address(0) || head.policyId != expectedPolicy
+                || !_namespaceUsable(head, _policies[namespace]) || indices.length == 0
+                || indices.length > MAX_RECORDS
+        ) return (address(0), ids);
+
+        Growth storage g = _growth[tokenId][namespace];
+        uint256 count = g.records.length;
+        if (indices.length > count) return (address(0), ids);
+        uint32 excluded = g.superseded;
+        uint32 expiring = g.expiring;
+        if (includeIds) ids = new bytes32[2][](indices.length);
+        for (uint256 i; i < indices.length; ++i) {
+            uint256 index = indices[i];
+            uint32 bit = _recordBit(index);
+            if (index >= count || (excluded & bit) != 0) return (address(0), new bytes32[2][](0));
+            if ((expiring & bit) != 0 && block.timestamp > g.records[index].validUntil) {
+                return (address(0), new bytes32[2][](0));
+            }
+            // Append assigns a fresh experience; correction supersedes its single current version.
+            // Every record is bound to this immutable holder at acceptance and token IDs are never reused.
+            excluded |= bit;
+            if (includeIds) {
+                StoredRecord storage record = g.records[index];
+                ids[i] = [record.claimId, record.experienceId];
+            }
+        }
     }
 
     function isCredited(uint256 tokenId, bytes32 namespace, bytes32 experienceId)
@@ -365,10 +427,18 @@ contract EvolvingSBT is ERC721, Ownable, EIP712, ReentrancyGuard, IEvolvingSBT, 
     /// @notice Namespace-level validity only. Individual record validity still needs application checks.
     function isUsable(uint256 tokenId, bytes32 namespace) external view returns (bool) {
         if (_ownerOf(tokenId) == address(0)) return false;
-        NamespacePolicy storage p = _policy(namespace);
-        StateHead storage h = _heads[tokenId][namespace];
+        return _namespaceUsable(_heads[tokenId][namespace], _policy(namespace));
+    }
+
+    function _namespaceUsable(StateHead storage h, NamespacePolicy storage p) private view returns (bool) {
         return p.live.usesEnabled && h.status == NamespaceStatus.Active
             && (h.validUntil == 0 || block.timestamp <= h.validUntil);
+    }
+
+    /// @dev MAX_RECORDS bounds every stored index. An index beyond the 32-bit range yields zero.
+    function _recordBit(uint256 index) private pure returns (uint32) {
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint32(uint256(1) << index);
     }
 
     function hashRecord(Record memory record) public pure returns (bytes32) {
@@ -446,7 +516,7 @@ contract EvolvingSBT is ERC721, Ownable, EIP712, ReentrancyGuard, IEvolvingSBT, 
         } else {
             uint256 oldIndex = g.claimIndexPlusOne[r.replaces];
             if (
-                oldIndex == 0 || g.superseded[r.replaces]
+                oldIndex == 0 || (g.superseded & _recordBit(oldIndex - 1)) != 0
                     || g.records[oldIndex - 1].experienceId != r.experienceId
             ) revert InvalidCorrection();
         }
@@ -470,9 +540,10 @@ contract EvolvingSBT is ERC721, Ownable, EIP712, ReentrancyGuard, IEvolvingSBT, 
             }
         }
         bytes32 statuses;
+        uint32 superseded = g.superseded;
         for (uint256 i; i < g.records.length; ++i) {
             bytes32 id = g.records[i].claimId;
-            bool active = !g.superseded[id]
+            bool active = (superseded & _recordBit(i)) == 0
                 && !(evidence.operation == Operation.Correct && evidence.record.replaces == id);
             statuses = keccak256(abi.encode(statuses, id, active));
         }
@@ -485,12 +556,22 @@ contract EvolvingSBT is ERC721, Ownable, EIP712, ReentrancyGuard, IEvolvingSBT, 
         Growth storage g = _growth[tokenId][namespace];
         Record memory r = evidence.record;
         if (evidence.operation == Operation.Correct) {
-            g.superseded[r.replaces] = true;
+            g.superseded |= _recordBit(g.claimIndexPlusOne[r.replaces] - 1);
         } else {
             g.credited[r.experienceId] = true;
             g.creditedActionsRoot = keccak256(abi.encode(g.creditedActionsRoot, r.experienceId));
         }
-        g.records.push(r);
+        if (r.validUntil != 0) g.expiring |= _recordBit(g.records.length);
+        g.records
+            .push(
+                StoredRecord({
+                    claimId: r.claimId,
+                    experienceId: r.experienceId,
+                    contentHash: r.contentHash,
+                    validUntil: r.validUntil,
+                    replaces: r.replaces
+                })
+            );
         g.claimIndexPlusOne[r.claimId] = g.records.length;
         g.recordsRoot = keccak256(abi.encode(g.recordsRoot, hashRecord(r)));
     }
